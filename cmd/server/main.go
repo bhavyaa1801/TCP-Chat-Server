@@ -13,21 +13,21 @@ type Client struct {
 }
 
 type Message struct {
-    Sender string
-    Text string
+	Sender   string
+	Text     string
+	Receiver string
+	IsPM     bool
 }
 
-type ServerMessage struct{
+type ServerMessage struct {
 	Text string
 }
 
-//req-res model for channel 
+// req-res model for channel
 type UsernameCheck struct {
 	Username string
 	Response chan bool
 }
-
-
 
 //channelss
 
@@ -51,7 +51,7 @@ func handleClient(conn net.Conn) {
 	username = strings.TrimSpace(username)
 	username = strings.ToLower(username)
 
-    responseChan := make(chan bool)
+	responseChan := make(chan bool)
 
 	usernamecheckchan <- UsernameCheck{
 		Username: username,
@@ -78,7 +78,7 @@ func handleClient(conn net.Conn) {
 	// Notify everyone
 	// broadcast("[SERVER] " + username + " joined the chat\n")
 	servermsgchan <- ServerMessage{
-		Text: "[SERVER]" + username + "joined the chat\n",
+		Text: "[SERVER] " + username + " joined the chat\n",
 	}
 
 	// Chat loop
@@ -87,7 +87,7 @@ func handleClient(conn net.Conn) {
 		if err != nil {
 			// removeClient(username)
 			leaveChan <- client
-		    leaveMsg := fmt.Sprintf("[SERVER] %s left the chat\n", username)
+			leaveMsg := fmt.Sprintf("[SERVER] %s left the chat\n", username)
 
 			servermsgchan <- ServerMessage{
 				Text: leaveMsg,
@@ -103,58 +103,123 @@ func handleClient(conn net.Conn) {
 		// fmt.Print(formattedMsg)
 		// broadcast(formattedMsg)
 
+		if strings.HasPrefix(msg, "/msg ") {
+			parts := strings.SplitN(msg, " ", 3)
 
-		fmt.Printf("%s: %s\n", username, msg)
+			if len(parts) < 3 {
+				conn.Write([]byte("Usage: /msg <username> <message>\n"))
+				continue
+			}
+			receiver := parts[1]
+			text := parts[2]
+
+			messageChan <- Message{
+				Sender:   username,
+				Receiver: receiver,
+				Text:     text,
+				IsPM:     true,
+			}
+			continue
+		}
 		messageChan <- Message{
-			Sender: username,
-			Text: msg,
+			Sender:   username,
+			Receiver: "",
+			Text:     msg,
+			IsPM:     false,
 		}
 	}
 }
 
 //client manager for chann
 
-func clientManager(){
-	
-    var clients []Client
-	for{
-		select{
+func clientManager() {
+
+	var clients []Client
+	for {
+		select {
 		case client := <-joinchan:
 
-	    	
-	    	clients = append(clients , client)
-		    
-		    fmt.Println("[MANAGER] Added:", client.Username)
-		
+			clients = append(clients, client)
+
+			fmt.Println("[MANAGER] Added:", client.Username)
+
 		case client := <-leaveChan:
-			for i,c := range clients{
+			for i, c := range clients {
 				if c.Username == client.Username {
-					clients = append(clients[:i],clients[i+1:]...)
+					clients = append(clients[:i], clients[i+1:]...)
 					break
 				}
 			}
-            fmt.Println("[MANAGER] Removed:", client.Username)
+			fmt.Println("[MANAGER] Removed:", client.Username)
 
 		case msg := <-messageChan:
-            formattedmsg := fmt.Sprintf(
-				"%s: %s\n",
-                msg.Sender,
-                msg.Text,
-			)
 
-			for _,c := range clients {
-				c.Conn.Write([]byte(formattedmsg))
+			if msg.IsPM {
+				//private msg
+				found := false
+				for _, c := range clients {
+					if c.Username == msg.Receiver {
+
+						found = true
+
+						fmt.Fprintf(
+							c.Conn,
+							"[PM from %s] %s\n",
+							msg.Sender,
+							msg.Text,
+						)
+						break
+					}
+				}
+				if found {
+					for _, c := range clients {
+						if c.Username == msg.Sender {
+							fmt.Fprintf(
+								c.Conn,
+								"[PM to %s] %s\n",
+								msg.Receiver,
+								msg.Text,
+							)
+							break
+						}
+					}
+				} else {
+					for _, c := range clients {
+
+						if c.Username == msg.Sender {
+
+							fmt.Fprintf(
+								c.Conn,
+								"[SERVER] User %s not found\n",
+								msg.Receiver,
+							)
+
+							break
+						}
+					}
+				}
+
+			} else {
+				formattedmsg := fmt.Sprintf(
+					"%s: %s\n",
+					msg.Sender,
+					msg.Text,
+				)
+
+				for _, c := range clients {
+					c.Conn.Write([]byte(formattedmsg))
+				}
 			}
 
 		case msg := <-servermsgchan:
-			for _,c := range clients {
+			for _, c := range clients {
 				c.Conn.Write([]byte(msg.Text))
 			}
 
 		case req := <-usernamecheckchan:
 			found := false
 
-			for _,client := range clients{
+			for _, client := range clients {
 				if client.Username == req.Username {
 					found = true
 					break
@@ -188,25 +253,3 @@ func main() {
 		go handleClient(conn)
 	}
 }
-
-
-
-
-
-
-//                 +----------------+
-//                 | clientManager  |
-//                 +----------------+
-//                         |
-//                         |
-//                  owns clients[]
-//                         ^
-//                         |
-//     -----------------------------------------
-//     |                  |                    |
-//     |                  |                    |
-//  joinChan          leaveChan          messageChan
-//     ^                  ^                    ^
-//     |                  |                    |
-// handleClient()   handleClient()      handleClient()
-
