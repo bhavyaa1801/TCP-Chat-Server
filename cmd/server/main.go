@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"time"
 )
 
 type Client struct {
@@ -29,6 +30,10 @@ type UsernameCheck struct {
 	Response chan bool
 }
 
+type UserListRequest struct {
+	Response chan []string
+}
+
 //channelss
 
 var joinchan = make(chan Client)
@@ -36,6 +41,22 @@ var leaveChan = make(chan Client)
 var messageChan = make(chan Message)
 var servermsgchan = make(chan ServerMessage)
 var usernamecheckchan = make(chan UsernameCheck)
+var userListchan = make(chan UserListRequest)
+
+func getUsers() []string {
+
+	response := make(chan []string)
+
+	userListchan <- UserListRequest{
+		Response: response,
+	}
+
+	return <-response
+}
+
+func getTimestamp() string {
+	return time.Now().Format("15:04:05")
+}
 
 func handleClient(conn net.Conn) {
 	defer conn.Close()
@@ -70,15 +91,12 @@ func handleClient(conn net.Conn) {
 		Conn:     conn,
 	}
 
-	// clients = append(clients, client)
 	joinchan <- client
 
 	fmt.Printf("%s joined the chat\n", username)
 
-	// Notify everyone
-	// broadcast("[SERVER] " + username + " joined the chat\n")
 	servermsgchan <- ServerMessage{
-		Text: "[SERVER] " + username + " joined the chat\n",
+		Text: username + " joined the chat\n",
 	}
 
 	// Chat loop
@@ -87,7 +105,7 @@ func handleClient(conn net.Conn) {
 		if err != nil {
 			// removeClient(username)
 			leaveChan <- client
-			leaveMsg := fmt.Sprintf("[SERVER] %s left the chat\n", username)
+			leaveMsg := fmt.Sprintf("%s left the chat\n", username)
 
 			servermsgchan <- ServerMessage{
 				Text: leaveMsg,
@@ -99,9 +117,33 @@ func handleClient(conn net.Conn) {
 
 		msg = strings.TrimSpace(msg)
 
-		// formattedMsg := fmt.Sprintf("%s: %s\n", username, msg)
-		// fmt.Print(formattedMsg)
-		// broadcast(formattedMsg)
+		if msg == "/help" {
+
+			const helpMessage = `
+                Available Commands:
+                /users              Show online users
+                /msg <user> <msg>   Send private message
+                /help               Show commands
+            `
+
+			conn.Write([]byte(helpMessage))
+
+			continue
+		}
+
+		if msg == "/users" {
+
+			users := getUsers()
+
+			conn.Write([]byte(
+				fmt.Sprintf(
+					"Online Users: %s\n",
+					strings.Join(users, ", "),
+				),
+			))
+
+			continue
+		}
 
 		if strings.HasPrefix(msg, "/msg ") {
 			parts := strings.SplitN(msg, " ", 3)
@@ -156,6 +198,9 @@ func clientManager() {
 
 			if msg.IsPM {
 				//private msg
+
+				timestamp := getTimestamp()
+
 				found := false
 				for _, c := range clients {
 					if c.Username == msg.Receiver {
@@ -164,7 +209,8 @@ func clientManager() {
 
 						fmt.Fprintf(
 							c.Conn,
-							"[PM from %s] %s\n",
+							"[%s] [PM from %s] %s\n",
+							timestamp,
 							msg.Sender,
 							msg.Text,
 						)
@@ -176,7 +222,8 @@ func clientManager() {
 						if c.Username == msg.Sender {
 							fmt.Fprintf(
 								c.Conn,
-								"[PM to %s] %s\n",
+								"[%s] [PM to %s] %s\n",
+								timestamp,
 								msg.Receiver,
 								msg.Text,
 							)
@@ -201,7 +248,8 @@ func clientManager() {
 
 			} else {
 				formattedmsg := fmt.Sprintf(
-					"%s: %s\n",
+					"[%s] %s: %s\n",
+					getTimestamp(),
 					msg.Sender,
 					msg.Text,
 				)
@@ -212,8 +260,17 @@ func clientManager() {
 			}
 
 		case msg := <-servermsgchan:
+
+			timestamp := getTimestamp()
+
+			formatted := fmt.Sprintf(
+				"[%s] [SERVER] %s\n",
+				timestamp,
+				msg.Text,
+			)
+
 			for _, c := range clients {
-				c.Conn.Write([]byte(msg.Text))
+				c.Conn.Write([]byte(formatted))
 			}
 
 		case req := <-usernamecheckchan:
@@ -226,6 +283,14 @@ func clientManager() {
 				}
 			}
 			req.Response <- found
+
+		case req := <-userListchan:
+
+			var users []string
+			for _, c := range clients {
+				users = append(users, c.Username)
+			}
+			req.Response <- users
 
 		}
 	}
