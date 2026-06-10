@@ -131,7 +131,8 @@ func handleClient(conn net.Conn) {
                 /users              Show online users
                 /msg <user> <msg>   Send private message
                 /help               Show commadss
-				/rename             to rename your old name
+				/rename             to rename your old name 
+				/quit               to leave the channel
             `
 
 			conn.Write([]byte(helpMessage))
@@ -151,6 +152,21 @@ func handleClient(conn net.Conn) {
 			))
 
 			continue
+		}
+
+		if msg == "/quit" {
+
+			conn.Write([]byte("Goodbye!\n"))
+
+			leaveChan <- client
+
+			servermsgchan <- ServerMessage{
+				Text: username + " left the chat",
+			}
+
+			fmt.Printf("%s disconnected\n", username)
+
+			return
 		}
 
 		if strings.HasPrefix(msg, "/rename ") {
@@ -182,6 +198,7 @@ func handleClient(conn net.Conn) {
 
 			oldUsername := username
 			username = newUsername
+			client.Username = username
 
 			servermsgchan <- ServerMessage{
 				Text: fmt.Sprintf("%s is now known as %s",
