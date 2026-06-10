@@ -34,6 +34,12 @@ type UserListRequest struct {
 	Response chan []string
 }
 
+type RenameRequest struct {
+	OldUsername string
+	NewUsername string
+	Response    chan bool
+}
+
 //channelss
 
 var joinchan = make(chan Client)
@@ -42,6 +48,7 @@ var messageChan = make(chan Message)
 var servermsgchan = make(chan ServerMessage)
 var usernamecheckchan = make(chan UsernameCheck)
 var userListchan = make(chan UserListRequest)
+var renameChan = make(chan RenameRequest)
 
 func getUsers() []string {
 
@@ -123,7 +130,8 @@ func handleClient(conn net.Conn) {
                 Available Commands:
                 /users              Show online users
                 /msg <user> <msg>   Send private message
-                /help               Show commands
+                /help               Show commadss
+				/rename             to rename your old name
             `
 
 			conn.Write([]byte(helpMessage))
@@ -141,6 +149,46 @@ func handleClient(conn net.Conn) {
 					strings.Join(users, ", "),
 				),
 			))
+
+			continue
+		}
+
+		if strings.HasPrefix(msg, "/rename ") {
+
+			parts := strings.SplitN(msg, " ", 2)
+
+			if len(parts) < 2 {
+				conn.Write([]byte("Usage: /rename <new_username>\n"))
+				continue
+			}
+
+			newUsername := strings.TrimSpace(parts[1])
+			newUsername = strings.ToLower(newUsername)
+
+			responseChan := make(chan bool)
+
+			renameChan <- RenameRequest{
+				OldUsername: username,
+				NewUsername: newUsername,
+				Response:    responseChan,
+			}
+
+			success := <-responseChan
+
+			if !success {
+				conn.Write([]byte("Username already taken\n"))
+				continue
+			}
+
+			oldUsername := username
+			username = newUsername
+
+			servermsgchan <- ServerMessage{
+				Text: fmt.Sprintf("%s is now known as %s",
+					oldUsername,
+					newUsername,
+				),
+			}
 
 			continue
 		}
@@ -291,6 +339,22 @@ func clientManager() {
 				users = append(users, c.Username)
 			}
 			req.Response <- users
+
+		case req := <-renameChan:
+			for _, c := range clients {
+				if c.Username == req.NewUsername {
+					req.Response <- false
+					continue
+				}
+			}
+			for i := range clients {
+				if clients[i].Username == req.OldUsername {
+					clients[i].Username = req.NewUsername
+					break
+				}
+			}
+
+			req.Response <- true
 
 		}
 	}
