@@ -72,12 +72,12 @@ Instead of allowing multiple goroutines to modify shared state, a single gorouti
                  Owns all server state
                              |
      -------------------------------------------------
-     |               |               |              |
-     |               |               |              |
- joinChan       leaveChan      messageChan    request channels
-     |               |               |              |
-     |               |               |              |
-handleClient   handleClient   handleClient   handleClient
+     |               |               |                |
+     |               |               |                |
+ joinChan       leaveChan      messageChan    request-response channels
+     |               |               |                |
+     |               |               |                |
+handleClient   handleClient   handleClient       handleClient
 ```
 
 ### Shared State Owned by clientManager()
